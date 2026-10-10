@@ -66,6 +66,46 @@
     width: 44px; height: 44px; border-radius: 50%; border: 2px solid #555;
     background: rgba(0,0,0,.6); color: #aaa; font-size: 22px; line-height: 1; cursor: pointer;
   }
+  #localVideo {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    background: #000; object-fit: contain; display: none;
+  }
+  #videoLayer.local #localVideo { display: block; }
+  #videoLayer.local #player { visibility: hidden; }
+
+  /* Startskærm: knap til indstillinger (til forælderen) */
+  #setupBtn {
+    position: absolute; bottom: max(24px, env(safe-area-inset-bottom)); left: 50%;
+    transform: translateX(-50%); background: none; border: 2px solid #666; color: #bbb;
+    font-size: 20px; padding: 12px 24px; border-radius: 12px; cursor: pointer;
+  }
+
+  /* Indstillinger: vælg videofiler */
+  #setup {
+    position: fixed; inset: 0; background: #111; z-index: 35; display: none;
+    overflow-y: auto; padding: max(24px, env(safe-area-inset-top)) 24px 40px;
+    font-size: 20px;
+  }
+  #setup.show { display: block; }
+  #setup h1 { font-size: 30px; margin: 0 0 8px; }
+  #setup p { color: #ccc; margin: 0 0 20px; line-height: 1.4; }
+  .row {
+    display: flex; align-items: center; gap: 16px; padding: 14px 0;
+    border-top: 1px solid #333; flex-wrap: wrap;
+  }
+  .row img { width: 160px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: #222; }
+  .row .info { flex: 1 1 200px; }
+  .row .title { font-weight: 700; font-size: 22px; }
+  .row .status { color: #aaa; font-size: 17px; margin-top: 4px; }
+  .row .status.ok { color: #7CFC7C; }
+  .row label, .row button, #setupDone {
+    font-size: 18px; padding: 12px 18px; border-radius: 10px; cursor: pointer;
+    border: 2px solid var(--frame); background: #000; color: var(--frame);
+  }
+  .row button { border-color: #666; color: #ccc; }
+  .row input[type=file] { display: none; }
+  #setupDone { margin-top: 24px; font-size: 22px; padding: 14px 28px; }
+
   #msg {
     position: fixed; left: 50%; bottom: 4vmin; transform: translateX(-50%);
     background: #222; color: #fff; padding: 12px 20px; border-radius: 12px;
@@ -75,7 +115,18 @@
 </head>
 <body>
 
-<div id="start"><button id="startBtn" aria-label="Start">START</button></div>
+<div id="start">
+  <button id="startBtn" aria-label="Start">START</button>
+  <button id="setupBtn">⚙︎ Indstillinger</button>
+</div>
+
+<div id="setup">
+  <h1>Videofiler</h1>
+  <p>Vælg en videofil til hver sang. Filerne gemmes kun her på iPad'en og bliver ikke lagt på internettet.
+     Sange uden fil afspilles fra YouTube.</p>
+  <div id="rows"></div>
+  <button id="setupDone">Færdig</button>
+</div>
 
 <main id="cards">
   <button class="card" id="cardA"></button>
@@ -84,6 +135,7 @@
 
 <div id="videoLayer">
   <div id="player"></div>
+  <video id="localVideo" playsinline webkit-playsinline preload="auto"></video>
   <button id="closeBtn" aria-label="Luk video">✕</button>
 </div>
 
@@ -109,6 +161,39 @@ let player = null;
 let playerReady = false;
 let pending = null;      // video der venter på at afspilleren er klar
 let playCheck = null;
+
+// --- Videofiler gemt på iPad'en (IndexedDB) ---------------------------
+const localVideo = document.getElementById("localVideo");
+const localFiles = {};   // song.id -> Blob
+let localUrl = null;
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("billedkort", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("videos");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbDo(mode, fn) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("videos", mode);
+    const req = fn(tx.objectStore("videos"));
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function loadLocalFiles() {
+  try {
+    for (const s of SONGS) {
+      const blob = await dbDo("readonly", st => st.get(s.id));
+      if (blob) localFiles[s.id] = blob;
+    }
+  } catch (e) { console.warn("Kunne ikke læse gemte videoer", e); }
+}
+// Bed iPad'en om ikke at slette de gemte videoer
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
 
 // --- Coverbilleder: bedste kvalitet, ellers fald tilbage -------------
 function coverUrl(song, cb) {
@@ -213,6 +298,20 @@ window.onYouTubeIframeAPIReady = function () {
   });
 };
 
+function playLocal(id) {
+  videoLayer.classList.add("show", "local");
+  localVideo.currentTime = 0;
+  localVideo.muted = false;
+  const p = localVideo.play();
+  if (p && p.catch) p.catch(() => { localVideo.controls = true; }); // så kan man trykke afspil
+}
+localVideo.addEventListener("ended", closeVideo);
+localVideo.addEventListener("error", () => {
+  if (!videoLayer.classList.contains("show")) return;
+  toast("Videofilen kunne ikke afspilles. Prøv en .mp4-fil.");
+  closeVideo();
+});
+
 function playVideo(id) {
   videoLayer.classList.add("show");
   if (!playerReady) { pending = id; return; }
@@ -230,7 +329,12 @@ function playVideo(id) {
 function closeVideo() {
   clearTimeout(playCheck);
   if (player && playerReady) player.stopVideo();
-  videoLayer.classList.remove("show");
+  localVideo.pause();
+  localVideo.controls = false;
+  localVideo.removeAttribute("src");
+  localVideo.load();
+  if (localUrl) { URL.revokeObjectURL(localUrl); localUrl = null; }
+  videoLayer.classList.remove("show", "local");
   showCards();
 }
 
@@ -242,7 +346,19 @@ cardEls.forEach((el, i) => {
     const song = shown[i];
     el.classList.add("chosen");
     cardEls[1 - i].classList.add("dim");
-    say(song.title, () => playVideo(song.id));
+    const blob = localFiles[song.id];
+    if (blob) {
+      // Start videoen (lydløst) og sæt den på pause med det samme, mens
+      // fingeren stadig er på skærmen – så må den spille med lyd bagefter.
+      localUrl = URL.createObjectURL(blob);
+      localVideo.src = localUrl;
+      localVideo.muted = true;
+      const p = localVideo.play();
+      if (p && p.then) p.then(() => { if (localVideo.muted) localVideo.pause(); }).catch(() => {});
+      say(song.title, () => playLocal(song.id));
+    } else {
+      say(song.title, () => playVideo(song.id));
+    }
   });
 });
 
@@ -255,6 +371,51 @@ document.getElementById("startBtn").addEventListener("click", () => {
   document.getElementById("start").style.display = "none";
 });
 
+// --- Indstillinger: vælg videofiler -----------------------------------
+const setupEl = document.getElementById("setup");
+function renderSetup() {
+  const rows = document.getElementById("rows");
+  rows.innerHTML = "";
+  SONGS.forEach(song => {
+    const has = !!localFiles[song.id];
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `
+      <img src="${covers[song.id] || `https://i.ytimg.com/vi/${song.id}/hqdefault.jpg`}" alt="">
+      <div class="info">
+        <div class="title"></div>
+        <div class="status ${has ? "ok" : ""}">${has ? "✓ Videofil gemt" : "Ingen fil – afspilles fra YouTube"}</div>
+      </div>
+      <label>${has ? "Skift fil" : "Vælg videofil"}<input type="file" accept="video/*,.mp4,.mov,.m4v"></label>
+      ${has ? '<button type="button">Fjern</button>' : ""}`;
+    row.querySelector(".title").textContent = song.title;
+    row.querySelector("input").addEventListener("change", async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      row.querySelector(".status").textContent = "Gemmer…";
+      try {
+        await dbDo("readwrite", st => st.put(file, song.id));
+        localFiles[song.id] = file;
+      } catch (err) {
+        toast("Kunne ikke gemme filen – er der plads nok på iPad'en?");
+      }
+      renderSetup();
+    });
+    const rm = row.querySelector("button");
+    if (rm) rm.addEventListener("click", async () => {
+      await dbDo("readwrite", st => st.delete(song.id));
+      delete localFiles[song.id];
+      renderSetup();
+    });
+    rows.appendChild(row);
+  });
+}
+document.getElementById("setupBtn").addEventListener("click", () => {
+  renderSetup();
+  setupEl.classList.add("show");
+});
+document.getElementById("setupDone").addEventListener("click", () => setupEl.classList.remove("show"));
+
 function toast(t) {
   msgEl.textContent = t;
   msgEl.style.display = "block";
@@ -263,6 +424,7 @@ function toast(t) {
 
 showCards();
 loadYouTubeApi();
+loadLocalFiles();
 </script>
 </body>
 </html>
