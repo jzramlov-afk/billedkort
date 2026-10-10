@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Billedkort</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Musik">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root {
+    --bg: #000;
+    --frame: #FFD400;   /* kraftig gul ramme – høj kontrast mod sort */
+    --text: #fff;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden; touch-action: manipulation;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+
+  /* Startskærm (forælder trykker én gang for at låse lyd/stemme op) */
+  #start {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); z-index: 30;
+  }
+  #startBtn {
+    width: min(60vw, 60vh); height: min(60vw, 60vh); border-radius: 50%;
+    border: 1.5vmin solid var(--frame); background: #000; color: var(--frame);
+    font-size: min(9vw, 9vh); font-weight: 800; cursor: pointer;
+  }
+
+  /* De to billeder */
+  #cards {
+    position: fixed; inset: 0; display: flex; gap: 4vmin; padding: 4vmin;
+    padding-top: max(4vmin, env(safe-area-inset-top));
+    padding-bottom: max(4vmin, env(safe-area-inset-bottom));
+    align-items: center; justify-content: center;
+  }
+  @media (orientation: portrait) { #cards { flex-direction: column; } .card { flex: 0 0 auto; } }
+  .card {
+    flex: 1 1 0; width: 100%; max-height: 100%; aspect-ratio: 16 / 9;
+    border: 1.6vmin solid var(--frame); border-radius: 3vmin;
+    background: #111 center / cover no-repeat; padding: 0; cursor: pointer;
+    transition: transform .15s ease, opacity .3s ease;
+  }
+  @media (orientation: landscape) { .card { width: auto; height: auto; max-width: 48vw; } }
+  .card:active { transform: scale(.97); }
+  .card.chosen { transform: scale(1.04); border-color: #fff; }
+  .card.dim { opacity: .15; }
+
+  /* Video i fuld skærm */
+  #videoLayer {
+    position: fixed; inset: 0; background: #000; z-index: 20; display: none;
+  }
+  #videoLayer.show { display: block; }
+  #player, #videoLayer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #closeBtn {
+    position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px; z-index: 2;
+    width: 44px; height: 44px; border-radius: 50%; border: 2px solid #555;
+    background: rgba(0,0,0,.6); color: #aaa; font-size: 22px; line-height: 1; cursor: pointer;
+  }
+  #msg {
+    position: fixed; left: 50%; bottom: 4vmin; transform: translateX(-50%);
+    background: #222; color: #fff; padding: 12px 20px; border-radius: 12px;
+    font-size: 18px; z-index: 40; display: none; max-width: 90vw; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="start"><button id="startBtn" aria-label="Start">START</button></div>
+
+<main id="cards">
+  <button class="card" id="cardA"></button>
+  <button class="card" id="cardB"></button>
+</main>
+
+<div id="videoLayer">
+  <div id="player"></div>
+  <button id="closeBtn" aria-label="Luk video">✕</button>
+</div>
+
+<div id="msg"></div>
+
+<script>
+// ---------------------------------------------------------------
+// Sangene. "title" er det, stemmen siger højt.
+// ---------------------------------------------------------------
+const SONGS = [
+  { title: "Only Teardrops",          id: "k59E7T0H-Us" },
+  { title: "Massaka Kids",            id: "TH4V-yHbJXk" },
+  { title: "Can't stop the feeling",  id: "ru0K8uYEZWw" },
+  { title: "Dyt i Bamsen",            id: "M6kwBsv2tYg" },
+];
+
+const cardEls = [document.getElementById("cardA"), document.getElementById("cardB")];
+const videoLayer = document.getElementById("videoLayer");
+const msgEl = document.getElementById("msg");
+let shown = [];          // de to sange der vises lige nu
+let busy = false;        // ignorér tryk mens en sang er i gang
+let player = null;
+let playerReady = false;
+let pending = null;      // video der venter på at afspilleren er klar
+let playCheck = null;
+
+// --- Coverbilleder: bedste kvalitet, ellers fald tilbage -------------
+function coverUrl(song, cb) {
+  const best = `https://i.ytimg.com/vi/${song.id}/maxresdefault.jpg`;
+  const ok   = `https://i.ytimg.com/vi/${song.id}/hqdefault.jpg`;
+  const img = new Image();
+  // YouTube returnerer et lille 120px gråt billede hvis maxres ikke findes
+  img.onload  = () => cb(img.naturalWidth > 200 ? best : ok);
+  img.onerror = () => cb(ok);
+  img.src = best;
+}
+const covers = {};
+SONGS.forEach(s => coverUrl(s, url => {
+  covers[s.id] = url;
+  cardEls.forEach(el => { if (el.dataset.id === s.id) el.style.backgroundImage = `url("${url}")`; });
+}));
+
+// --- Vælg to tilfældige (helst ikke præcis samme par som før) ---------
+function pickTwo() {
+  const prev = shown.map(s => s.id).sort().join();
+  let pair;
+  do {
+    const pool = SONGS.slice();
+    pair = [];
+    while (pair.length < 2) pair.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  } while (pair.map(s => s.id).sort().join() === prev);
+  return pair;
+}
+
+function showCards() {
+  shown = pickTwo();
+  shown.forEach((song, i) => {
+    const el = cardEls[i];
+    el.dataset.id = song.id;
+    el.setAttribute("aria-label", song.title);
+    el.style.backgroundImage = covers[song.id] ? `url("${covers[song.id]}")`
+      : `url("https://i.ytimg.com/vi/${song.id}/hqdefault.jpg")`;
+    el.classList.remove("chosen", "dim");
+  });
+  busy = false;
+}
+
+// --- Dansk stemme ----------------------------------------------------
+let daVoice = null;
+function findVoice() {
+  const voices = speechSynthesis.getVoices();
+  daVoice = voices.find(v => /^da/i.test(v.lang) && /enhanced|forbedret|premium/i.test(v.name))
+         || voices.find(v => /^da/i.test(v.lang)) || null;
+}
+if ("speechSynthesis" in window) {
+  findVoice();
+  speechSynthesis.onvoiceschanged = findVoice;
+}
+
+function say(text, done) {
+  let finished = false;
+  const finish = () => { if (!finished) { finished = true; done && done(); } };
+  if (!("speechSynthesis" in window)) return finish();
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "da-DK";
+  if (daVoice) u.voice = daVoice;
+  u.rate = 0.8;     // lidt langsomt og tydeligt
+  u.pitch = 1;
+  u.volume = 1;
+  u.onend = finish;
+  u.onerror = finish;
+  speechSynthesis.speak(u);
+  // iPad glemmer nogle gange at melde "færdig" – sikkerhedsnet
+  setTimeout(finish, 1500 + text.length * 120);
+}
+
+// --- YouTube-afspiller ----------------------------------------------
+function loadYouTubeApi() {
+  const s = document.createElement("script");
+  s.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(s);
+}
+window.onYouTubeIframeAPIReady = function () {
+  player = new YT.Player("player", {
+    width: "100%", height: "100%",
+    host: "https://www.youtube-nocookie.com",
+    playerVars: {
+      playsinline: 1, rel: 0, modestbranding: 1, controls: 1,
+      fs: 0, iv_load_policy: 3, disablekb: 1,
+      origin: location.origin,
+    },
+    events: {
+      onReady: () => {
+        playerReady = true;
+        if (pending) { const id = pending; pending = null; playVideo(id); }
+      },
+      onStateChange: e => {
+        if (e.data === YT.PlayerState.PLAYING) clearTimeout(playCheck);
+        if (e.data === YT.PlayerState.ENDED) closeVideo();
+      },
+      onError: () => {
+        toast("Videoen kunne ikke afspilles her.");
+        closeVideo();
+      },
+    },
+  });
+};
+
+function playVideo(id) {
+  videoLayer.classList.add("show");
+  if (!playerReady) { pending = id; return; }
+  player.unMute();
+  player.setVolume(100);
+  player.loadVideoById(id);
+  // Hvis iPad'en ikke vil starte selv, står YouTubes egen store
+  // afspilknap klar på hele skærmen – ét tryk på den starter sangen.
+  clearTimeout(playCheck);
+  playCheck = setTimeout(() => {
+    if (player.getPlayerState && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
+  }, 2500);
+}
+
+function closeVideo() {
+  clearTimeout(playCheck);
+  if (player && playerReady) player.stopVideo();
+  videoLayer.classList.remove("show");
+  showCards();
+}
+
+// --- Tryk på et billede ---------------------------------------------
+cardEls.forEach((el, i) => {
+  el.addEventListener("click", () => {
+    if (busy) return;
+    busy = true;
+    const song = shown[i];
+    el.classList.add("chosen");
+    cardEls[1 - i].classList.add("dim");
+    say(song.title, () => playVideo(song.id));
+  });
+});
+
+document.getElementById("closeBtn").addEventListener("click", closeVideo);
+
+// --- Startskærm ------------------------------------------------------
+document.getElementById("startBtn").addEventListener("click", () => {
+  // Første tale skal ske ved et tryk for at iPad tillader stemmen
+  say("Vælg en sang");
+  document.getElementById("start").style.display = "none";
+});
+
+function toast(t) {
+  msgEl.textContent = t;
+  msgEl.style.display = "block";
+  setTimeout(() => (msgEl.style.display = "none"), 4000);
+}
+
+showCards();
+loadYouTubeApi();
+</script>
+</body>
+</html>
