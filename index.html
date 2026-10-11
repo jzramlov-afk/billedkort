@@ -368,7 +368,7 @@ cardEls.forEach((el, i) => {
 document.getElementById("closeBtn").addEventListener("click", closeVideo);
 
 // --- Opstart ----------------------------------------------------------
-// Appen starter med en tilfældig sang og en stor "TRYK HER"-cirkel.
+// Appen starter med Only Teardrops og en stor "TRYK HER"-cirkel.
 // Ved YouTube rammer trykket afspilleren bag cirklen: iPad lader kun
 // YouTube starte af sig selv, når der er trykket direkte på afspilleren
 // én gang – derefter starter alle sange automatisk. Sangen spiller færdig,
@@ -379,7 +379,7 @@ let startSong = null;
 function showStartScreen() {
   unlocking = true;
   busy = true;
-  startSong = SONGS[Math.floor(Math.random() * SONGS.length)];
+  startSong = SONGS[0]; // Only Teardrops er altid startsangen
   videoLayer.classList.add("show", "unlock");
   if (localFiles[startSong.id]) {
     videoLayer.classList.add("local");
