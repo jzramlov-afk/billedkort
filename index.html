@@ -57,6 +57,13 @@
   }
   #videoLayer.show { display: block; }
   #player, #videoLayer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #unlockHint {
+    position: absolute; left: 0; right: 0; top: max(16px, env(safe-area-inset-top));
+    z-index: 2; text-align: center; pointer-events: none; display: none;
+    color: var(--frame); font-size: min(6vw, 40px); font-weight: 800;
+    text-shadow: 0 0 8px #000, 0 0 16px #000;
+  }
+  #videoLayer.unlock #unlockHint { display: block; }
   #closeBtn {
     position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px; z-index: 2;
     width: 44px; height: 44px; border-radius: 50%; border: 2px solid #555;
@@ -132,6 +139,7 @@
 <div id="videoLayer">
   <div id="player"></div>
   <video id="localVideo" playsinline webkit-playsinline preload="auto"></video>
+  <div id="unlockHint">Tryk på videoen for at starte</div>
   <button id="closeBtn" aria-label="Luk video">✕</button>
 </div>
 
@@ -280,9 +288,11 @@ window.onYouTubeIframeAPIReady = function () {
     events: {
       onReady: () => {
         playerReady = true;
+        if (unlocking) player.cueVideoById(SONGS[0].id);
         if (pending) { const id = pending; pending = null; playVideo(id); }
       },
       onStateChange: e => {
+        if (unlocking && e.data === YT.PlayerState.PLAYING) { player.pauseVideo(); finishUnlock(); return; }
         if (e.data === YT.PlayerState.PLAYING) clearTimeout(playCheck);
         if (e.data === YT.PlayerState.ENDED) closeVideo();
       },
@@ -358,13 +368,35 @@ cardEls.forEach((el, i) => {
   });
 });
 
-document.getElementById("closeBtn").addEventListener("click", closeVideo);
+document.getElementById("closeBtn").addEventListener("click", () => unlocking ? finishUnlock() : closeVideo());
 
 // --- Startskærm ------------------------------------------------------
-document.getElementById("startBtn").addEventListener("click", () => {
-  // Første tale skal ske ved et tryk for at iPad tillader stemmen
-  say("Vælg en sang");
+// iPad lader først YouTube-afspilleren starte af sig selv, når nogen har
+// trykket direkte på en YouTube-video én gang. Derfor viser vi efter START
+// en video, som forælderen trykker på; den stoppes straks igen, og derefter
+// starter alle sange automatisk.
+let unlocking = false;
+
+function finishStart() {
   document.getElementById("start").style.display = "none";
+  say("Vælg en sang");
+}
+function finishUnlock() {
+  unlocking = false;
+  if (player && playerReady) player.stopVideo();
+  videoLayer.classList.remove("show", "unlock");
+  finishStart();
+}
+
+document.getElementById("startBtn").addEventListener("click", () => {
+  // Første tale skal ske ved et tryk, for at iPad tillader stemmen
+  say(" ");
+  const needsYouTube = SONGS.some(song => !localFiles[song.id]);
+  if (!needsYouTube) return finishStart();
+  unlocking = true;
+  document.getElementById("start").style.display = "none";
+  videoLayer.classList.add("show", "unlock");
+  if (playerReady) player.cueVideoById(SONGS[0].id);
 });
 
 // --- Indstillinger: vælg videofiler -----------------------------------
