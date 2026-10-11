@@ -4,4 +4,5 @@ En enkel webapp til iPad: to store coverbilleder vises ad gangen. Ét tryk på e
 
 - Sangene står i `SONGS` øverst i scriptet i `index.html` (titel + YouTube-id).
 - Åbn via GitHub Pages: https://jzramlov-afk.github.io/billedkort/
-- Egne videofiler: Startskærm → "Indstillinger" → vælg en fil pr. sang. Filerne gemmes kun lokalt på iPad'en (IndexedDB) og afspilles uden reklamer. Sange uden fil afspilles fra YouTube.
+- Appen starter med en tilfældig sang bag en "TRYK HER"-cirkel; sangen spiller færdig, derefter siger stemmen "Vælg en sang".
+- Egne videofiler: Opstartsskærmen → "Indstillinger" → vælg en fil pr. sang. Filerne gemmes kun lokalt på iPad'en (IndexedDB) og afspilles uden reklamer. Sange uden fil afspilles fra YouTube.

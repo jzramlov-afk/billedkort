@@ -21,17 +21,6 @@
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
 
-  /* Startskærm (forælder trykker én gang for at låse lyd/stemme op) */
-  #start {
-    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-    background: var(--bg); z-index: 30;
-  }
-  #startBtn {
-    width: min(60vw, 60vh); height: min(60vw, 60vh); border-radius: 50%;
-    border: 1.5vmin solid var(--frame); background: #000; color: var(--frame);
-    font-size: min(9vw, 9vh); font-weight: 800; cursor: pointer;
-  }
-
   /* De to billeder */
   #cards {
     position: fixed; inset: 0; display: flex; gap: 4vmin; padding: 4vmin;
@@ -57,7 +46,8 @@
   }
   #videoLayer.show { display: block; }
   #player, #videoLayer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-  /* Opstartstrin: ligner START-knappen, men trykket går igennem til YouTube-videoen bagved */
+  /* Opstartsskærm: "TRYK HER" over den første video. Ved YouTube går trykket
+     igennem til afspilleren bagved; ved egne videofiler fanges det af siden. */
   #unlockHint {
     position: absolute; inset: 0; z-index: 2; pointer-events: none; display: none;
     background: rgba(0,0,0,.82); align-items: center; justify-content: center;
@@ -69,12 +59,9 @@
     font-size: min(8vw, 8vh); font-weight: 800; line-height: 1.1;
   }
   #videoLayer.unlock #unlockHint { display: flex; }
-  #videoLayer.unlock #closeBtn {
-    top: auto; bottom: max(20px, env(safe-area-inset-bottom)); right: 50%; transform: translateX(50%);
-    width: auto; height: auto; padding: 10px 18px; border-radius: 10px; font-size: 16px;
-  }
-  #videoLayer.unlock #closeBtn::after { content: "Spring over"; }
-  #videoLayer.unlock #closeBtn span { display: none; }
+  #videoLayer.unlock.local #unlockHint { pointer-events: auto; cursor: pointer; }
+  #videoLayer.unlock #closeBtn { display: none; }
+  #videoLayer.unlock #setupBtn { display: block; }
   #closeBtn {
     position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px; z-index: 2;
     width: 44px; height: 44px; border-radius: 50%; border: 2px solid #555;
@@ -87,8 +74,9 @@
   #videoLayer.local #localVideo { display: block; }
   #videoLayer.local #player { visibility: hidden; }
 
-  /* Startskærm: knap til indstillinger (til forælderen) */
+  /* Knap til indstillinger (til forælderen), kun på opstartsskærmen */
   #setupBtn {
+    display: none; z-index: 3;
     position: absolute; bottom: max(24px, env(safe-area-inset-bottom)); left: 50%;
     transform: translateX(-50%); background: none; border: 2px solid #666; color: #bbb;
     font-size: 20px; padding: 12px 24px; border-radius: 12px; cursor: pointer;
@@ -129,11 +117,6 @@
 </head>
 <body>
 
-<div id="start">
-  <button id="startBtn" aria-label="Start">START</button>
-  <button id="setupBtn">⚙︎ Indstillinger</button>
-</div>
-
 <div id="setup">
   <h1>Videofiler</h1>
   <p>Vælg en videofil til hver sang. Filerne gemmes kun her på iPad'en og bliver ikke lagt på internettet.
@@ -151,7 +134,8 @@
   <div id="player"></div>
   <video id="localVideo" playsinline webkit-playsinline preload="auto"></video>
   <div id="unlockHint"><span>TRYK<br>HER</span></div>
-  <button id="closeBtn" aria-label="Luk video"><span>✕</span></button>
+  <button id="closeBtn" aria-label="Luk video">✕</button>
+  <button id="setupBtn">⚙︎ Indstillinger</button>
 </div>
 
 <div id="msg"></div>
@@ -299,11 +283,11 @@ window.onYouTubeIframeAPIReady = function () {
     events: {
       onReady: () => {
         playerReady = true;
-        if (unlocking) player.cueVideoById(SONGS[0].id);
+        if (unlocking && startSong && !localFiles[startSong.id]) player.cueVideoById(startSong.id);
         if (pending) { const id = pending; pending = null; playVideo(id); }
       },
       onStateChange: e => {
-        if (unlocking && e.data === YT.PlayerState.PLAYING) { player.pauseVideo(); finishUnlock(); return; }
+        if (unlocking && e.data === YT.PlayerState.PLAYING) finishUnlock();
         if (e.data === YT.PlayerState.PLAYING) clearTimeout(playCheck);
         if (e.data === YT.PlayerState.ENDED) closeVideo();
       },
@@ -351,8 +335,10 @@ function closeVideo() {
   localVideo.removeAttribute("src");
   localVideo.load();
   if (localUrl) { URL.revokeObjectURL(localUrl); localUrl = null; }
-  videoLayer.classList.remove("show", "local");
+  unlocking = false;
+  videoLayer.classList.remove("show", "local", "unlock");
   showCards();
+  say("Vælg en sang");
 }
 
 // --- Tryk på et billede ---------------------------------------------
@@ -379,35 +365,43 @@ cardEls.forEach((el, i) => {
   });
 });
 
-document.getElementById("closeBtn").addEventListener("click", () => unlocking ? finishUnlock() : closeVideo());
+document.getElementById("closeBtn").addEventListener("click", closeVideo);
 
-// --- Startskærm ------------------------------------------------------
-// iPad lader først YouTube-afspilleren starte af sig selv, når nogen har
-// trykket direkte på en YouTube-video én gang. Derfor viser vi efter START
-// en video, som forælderen trykker på; den stoppes straks igen, og derefter
-// starter alle sange automatisk.
+// --- Opstart ----------------------------------------------------------
+// Appen starter med en tilfældig sang og en stor "TRYK HER"-cirkel.
+// Ved YouTube rammer trykket afspilleren bag cirklen: iPad lader kun
+// YouTube starte af sig selv, når der er trykket direkte på afspilleren
+// én gang – derefter starter alle sange automatisk. Sangen spiller færdig,
+// og bagefter siger stemmen "Vælg en sang" og to billeder kommer frem.
 let unlocking = false;
+let startSong = null;
 
-function finishStart() {
-  document.getElementById("start").style.display = "none";
-  say("Vælg en sang");
+function showStartScreen() {
+  unlocking = true;
+  busy = true;
+  startSong = SONGS[Math.floor(Math.random() * SONGS.length)];
+  videoLayer.classList.add("show", "unlock");
+  if (localFiles[startSong.id]) {
+    videoLayer.classList.add("local");
+    localUrl = URL.createObjectURL(localFiles[startSong.id]);
+    localVideo.src = localUrl;
+  } else if (playerReady) {
+    player.cueVideoById(startSong.id);
+  }
 }
 function finishUnlock() {
   unlocking = false;
-  if (player && playerReady) player.stopVideo();
-  videoLayer.classList.remove("show", "unlock");
-  finishStart();
+  videoLayer.classList.remove("unlock");
 }
-
-document.getElementById("startBtn").addEventListener("click", () => {
-  // Første tale skal ske ved et tryk, for at iPad tillader stemmen
+// Egen videofil: trykket fanges af siden, som så starter videoen og
+// samtidig låser op for stemmen.
+document.getElementById("unlockHint").addEventListener("click", () => {
+  if (!unlocking || !videoLayer.classList.contains("local")) return;
   say(" ");
-  const needsYouTube = SONGS.some(song => !localFiles[song.id]);
-  if (!needsYouTube) return finishStart();
-  unlocking = true;
-  document.getElementById("start").style.display = "none";
-  videoLayer.classList.add("show", "unlock");
-  if (playerReady) player.cueVideoById(SONGS[0].id);
+  finishUnlock();
+  localVideo.currentTime = 0;
+  localVideo.muted = false;
+  localVideo.play().catch(() => { localVideo.controls = true; });
 });
 
 // --- Indstillinger: vælg videofiler -----------------------------------
@@ -453,7 +447,7 @@ document.getElementById("setupBtn").addEventListener("click", () => {
   renderSetup();
   setupEl.classList.add("show");
 });
-document.getElementById("setupDone").addEventListener("click", () => setupEl.classList.remove("show"));
+document.getElementById("setupDone").addEventListener("click", () => location.reload());
 
 function toast(t) {
   msgEl.textContent = t;
@@ -463,7 +457,7 @@ function toast(t) {
 
 showCards();
 loadYouTubeApi();
-loadLocalFiles();
+loadLocalFiles().then(showStartScreen);
 </script>
 </body>
 </html>
