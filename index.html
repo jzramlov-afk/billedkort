@@ -107,6 +107,25 @@
   .row button { border-color: #666; color: #ccc; }
   .row input[type=file] { display: none; }
   #setupDone { margin-top: 24px; font-size: 22px; padding: 14px 28px; }
+  #setup h2 { font-size: 24px; margin: 32px 0 6px; }
+  #pickCount { font-weight: 700; color: var(--frame); margin: 0 0 8px; }
+  .row .pick { width: 34px; height: 34px; accent-color: var(--frame); flex: 0 0 auto; margin: 0; }
+  .row .pick:disabled { opacity: .35; }
+  .row.always .pick:disabled { opacity: 1; }
+  .row .tag { display: inline-block; font-size: 14px; font-weight: 400; color: #000;
+              background: var(--frame); border-radius: 6px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; }
+  .row .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  #addForm { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
+  #addForm input[type=text], #addForm input[type=url] {
+    font-size: 20px; padding: 12px; border-radius: 10px; border: 2px solid #555;
+    background: #000; color: #fff; width: 100%;
+  }
+  #addPreview { display: flex; align-items: center; gap: 16px; min-height: 0; }
+  #addPreview img { width: 160px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; }
+  #addBtn {
+    align-self: flex-start; font-size: 20px; padding: 12px 24px; border-radius: 10px; cursor: pointer;
+    border: 2px solid var(--frame); background: #000; color: var(--frame);
+  }
 
   #msg {
     position: fixed; left: 50%; bottom: 4vmin; transform: translateX(-50%);
@@ -118,10 +137,25 @@
 <body>
 
 <div id="setup">
-  <h1>Videofiler</h1>
-  <p>Vælg en videofil til hver sang. Filerne gemmes kun her på iPad'en og bliver ikke lagt på internettet.
-     Sange uden fil afspilles fra YouTube.</p>
+  <h1>Indstillinger</h1>
+
+  <h2>Playliste – 4 sange</h2>
+  <p>Only Teardrops er altid med og er altid startsangen. Sæt flueben ved 3 andre sange.
+     Valget gemmes her på iPad'en.</p>
+  <p id="pickCount"></p>
+  <p>Du kan også gemme en videofil til en sang. Så spiller den fra iPad'en uden YouTube.
+     Filerne gemmes kun her på iPad'en og bliver ikke lagt på internettet.</p>
   <div id="rows"></div>
+
+  <h2>Tilføj ny sang</h2>
+  <p>Indsæt et link fra YouTube, og skriv den titel, stemmen skal sige.</p>
+  <div id="addForm">
+    <input id="addUrl" type="url" placeholder="https://youtu.be/…" autocomplete="off" autocapitalize="off">
+    <div id="addPreview"></div>
+    <input id="addTitle" type="text" placeholder="Titel, fx Lille Peter Edderkop" autocomplete="off">
+    <button id="addBtn" type="button">Tilføj sang</button>
+  </div>
+
   <button id="setupDone">Færdig</button>
 </div>
 
@@ -142,14 +176,58 @@
 
 <script>
 // ---------------------------------------------------------------
-// Sangene. "title" er det, stemmen siger højt.
+// Sangene. "title" er det, stemmen siger højt; "id" er YouTube-id'et.
+// BUILTIN er de forudinstallerede sange. Sange tilføjet under
+// Indstillinger, rettede titler og playlisten gemmes i localStorage.
 // ---------------------------------------------------------------
-const SONGS = [
+const TEARDROPS = "k59E7T0H-Us"; // altid med i playlisten og altid startsang
+const BUILTIN = [
   { title: "Only Teardrops",          id: "k59E7T0H-Us" },
   { title: "Massaka Kids",            id: "TH4V-yHbJXk" },
   { title: "Can't stop the feeling",  id: "ru0K8uYEZWw" },
   { title: "Dyt i Bamsen",            id: "M6kwBsv2tYg" },
+  { title: "Plukke æbler",            id: "nNxPd4gRGJY" },
+  { title: "Vil du vil du",           id: "D58NCycCTlE" },
+  { title: "Dance Kids",              id: "xnVzNXyn54g" },
+  { title: "Arne Aligator",           id: "6i9mCMUtPrw" },
+  { title: "Loppen",                  id: "csvwb95GcXI" },
+  { title: "Halli Hallo",             id: "cuLiCzZ7nmU" },
 ];
+const DEFAULT_PICKS = ["TH4V-yHbJXk", "ru0K8uYEZWw", "M6kwBsv2tYg"];
+
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+    catch (e) { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+    catch (e) { return false; }
+  },
+};
+let customSongs = store.get("billedkort.custom", []);   // [{id, title}]
+let titleEdits  = store.get("billedkort.titles", {});   // id -> titel
+
+function library() {
+  const extra = customSongs.filter(c => !BUILTIN.some(b => b.id === c.id));
+  return [...BUILTIN, ...extra].map(s => ({ ...s, title: titleEdits[s.id] || s.title }));
+}
+function findSong(id) { return library().find(s => s.id === id); }
+
+// De 3 sange ved siden af Only Teardrops. Mangler der nogen (fx en slettet
+// sang), fyldes der op, så playlisten altid har 4 sange.
+function loadPicks() {
+  const picks = store.get("billedkort.playlist", DEFAULT_PICKS)
+    .filter((id, i, a) => id !== TEARDROPS && findSong(id) && a.indexOf(id) === i)
+    .slice(0, 3);
+  for (const id of [...DEFAULT_PICKS, ...library().map(s => s.id)]) {
+    if (picks.length >= 3) break;
+    if (id !== TEARDROPS && !picks.includes(id)) picks.push(id);
+  }
+  return picks;
+}
+// Playlisten: altid 4 sange, Only Teardrops først
+const SONGS = [findSong(TEARDROPS), ...loadPicks().map(findSong)];
 
 const cardEls = [document.getElementById("cardA"), document.getElementById("cardB")];
 const videoLayer = document.getElementById("videoLayer");
@@ -185,7 +263,7 @@ async function dbDo(mode, fn) {
 }
 async function loadLocalFiles() {
   try {
-    for (const s of SONGS) {
+    for (const s of library()) {
       const blob = await dbDo("readonly", st => st.get(s.id));
       if (blob) localFiles[s.id] = blob;
     }
@@ -404,25 +482,58 @@ document.getElementById("unlockHint").addEventListener("click", () => {
   localVideo.play().catch(() => { localVideo.controls = true; });
 });
 
-// --- Indstillinger: vælg videofiler -----------------------------------
+// --- Indstillinger: playliste, videofiler og nye sange ----------------
 const setupEl = document.getElementById("setup");
+let draftPicks = [];
+
+function thumb(id) { return covers[id] || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`; }
+
 function renderSetup() {
   const rows = document.getElementById("rows");
   rows.innerHTML = "";
-  SONGS.forEach(song => {
+  document.getElementById("pickCount").textContent =
+    `Valgt: ${draftPicks.length} af 3 (+ Only Teardrops)`;
+  const full = draftPicks.length >= 3;
+
+  library().forEach(song => {
+    const always = song.id === TEARDROPS;
+    const picked = always || draftPicks.includes(song.id);
+    const custom = !BUILTIN.some(b => b.id === song.id);
     const has = !!localFiles[song.id];
     const row = document.createElement("div");
-    row.className = "row";
+    row.className = "row" + (always ? " always" : "");
     row.innerHTML = `
-      <img src="${covers[song.id] || `https://i.ytimg.com/vi/${song.id}/hqdefault.jpg`}" alt="">
+      <input class="pick" type="checkbox" aria-label="Med i playlisten">
+      <img src="${thumb(song.id)}" alt="">
       <div class="info">
         <div class="title"></div>
-        <div class="status ${has ? "ok" : ""}">${has ? "✓ Videofil gemt" : "Ingen fil – afspilles fra YouTube"}</div>
+        <div class="status ${has ? "ok" : ""}">${has ? "✓ Videofil gemt" : "Afspilles fra YouTube"}</div>
       </div>
-      <label>${has ? "Skift fil" : "Vælg videofil"}<input type="file" accept="video/*,.mp4,.mov,.m4v"></label>
-      ${has ? '<button type="button">Fjern</button>' : ""}`;
-    row.querySelector(".title").textContent = song.title;
-    row.querySelector("input").addEventListener("change", async e => {
+      <div class="actions">
+        <label>${has ? "Skift fil" : "Vælg videofil"}<input type="file" accept="video/*,.mp4,.mov,.m4v"></label>
+        ${has ? '<button type="button" data-act="rmfile">Fjern fil</button>' : ""}
+        <button type="button" data-act="rename">Ret titel</button>
+        ${custom ? '<button type="button" data-act="delete">Slet sang</button>' : ""}
+      </div>`;
+    const titleEl = row.querySelector(".title");
+    titleEl.textContent = song.title;
+    if (always) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "Altid med";
+      titleEl.appendChild(tag);
+    }
+
+    const box = row.querySelector(".pick");
+    box.checked = picked;
+    box.disabled = always || (full && !picked);
+    box.addEventListener("change", () => {
+      if (box.checked) { if (draftPicks.length < 3) draftPicks.push(song.id); }
+      else draftPicks = draftPicks.filter(id => id !== song.id);
+      renderSetup();
+    });
+
+    row.querySelector("input[type=file]").addEventListener("change", async e => {
       const file = e.target.files[0];
       if (!file) return;
       row.querySelector(".status").textContent = "Gemmer…";
@@ -434,20 +545,75 @@ function renderSetup() {
       }
       renderSetup();
     });
-    const rm = row.querySelector("button");
-    if (rm) rm.addEventListener("click", async () => {
-      await dbDo("readwrite", st => st.delete(song.id));
-      delete localFiles[song.id];
+
+    row.querySelectorAll("button[data-act]").forEach(btn => btn.addEventListener("click", async () => {
+      const act = btn.dataset.act;
+      if (act === "rmfile") {
+        await dbDo("readwrite", st => st.delete(song.id));
+        delete localFiles[song.id];
+      } else if (act === "rename") {
+        const t = prompt("Hvad skal stemmen sige?", song.title);
+        if (t && t.trim()) {
+          titleEdits[song.id] = t.trim();
+          store.set("billedkort.titles", titleEdits);
+        }
+      } else if (act === "delete") {
+        if (!confirm(`Slet "${song.title}"?`)) return;
+        customSongs = customSongs.filter(c => c.id !== song.id);
+        store.set("billedkort.custom", customSongs);
+        draftPicks = draftPicks.filter(id => id !== song.id);
+        if (localFiles[song.id]) {
+          await dbDo("readwrite", st => st.delete(song.id));
+          delete localFiles[song.id];
+        }
+      }
       renderSetup();
-    });
+    }));
+
     rows.appendChild(row);
   });
 }
+
+// --- Tilføj ny sang fra et YouTube-link --------------------------------
+function parseYouTubeId(text) {
+  const t = (text || "").trim();
+  const m = t.match(/(?:youtu\.be\/|[?&]v=|\/(?:shorts|embed|live|v)\/)([A-Za-z0-9_-]{11})/);
+  if (m) return m[1];
+  return /^[A-Za-z0-9_-]{11}$/.test(t) ? t : null;
+}
+const addUrl = document.getElementById("addUrl");
+const addTitle = document.getElementById("addTitle");
+const addPreview = document.getElementById("addPreview");
+addUrl.addEventListener("input", () => {
+  const id = parseYouTubeId(addUrl.value);
+  addPreview.innerHTML = id ? `<img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="">` : "";
+});
+document.getElementById("addBtn").addEventListener("click", () => {
+  const id = parseYouTubeId(addUrl.value);
+  const title = addTitle.value.trim();
+  if (!id) return toast("Linket ligner ikke et YouTube-link.");
+  if (!title) return toast("Skriv den titel, stemmen skal sige.");
+  if (findSong(id)) return toast("Den sang findes allerede på listen.");
+  customSongs.push({ id, title });
+  if (!store.set("billedkort.custom", customSongs)) return toast("Kunne ikke gemme sangen.");
+  addUrl.value = ""; addTitle.value = ""; addPreview.innerHTML = "";
+  toast(`"${title}" er tilføjet. Sæt flueben, hvis den skal i playlisten.`);
+  renderSetup();
+});
+
 document.getElementById("setupBtn").addEventListener("click", () => {
+  draftPicks = SONGS.slice(1).map(s => s.id);
   renderSetup();
   setupEl.classList.add("show");
+  setupEl.scrollTop = 0;
 });
-document.getElementById("setupDone").addEventListener("click", () => location.reload());
+document.getElementById("setupDone").addEventListener("click", () => {
+  if (draftPicks.length !== 3) {
+    return toast(`Vælg 3 sange ud over Only Teardrops (du har valgt ${draftPicks.length}).`);
+  }
+  store.set("billedkort.playlist", draftPicks);
+  location.reload();
+});
 
 function toast(t) {
   msgEl.textContent = t;
