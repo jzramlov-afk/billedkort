@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Billedkort</title>
+<meta name="apple-mobile-web-app-title" content="Musik">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root {
+    --bg: #000;
+    --frame: #FFD400;   /* kraftig gul ramme – høj kontrast mod sort */
+    --text: #fff;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    overflow: hidden; touch-action: manipulation;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  }
+
+  /* De to billeder */
+  #cards {
+    position: fixed; inset: 0; display: flex; gap: 4vmin; padding: 4vmin;
+    padding-top: max(4vmin, env(safe-area-inset-top));
+    padding-bottom: max(4vmin, env(safe-area-inset-bottom));
+    align-items: center; justify-content: center;
+  }
+  @media (orientation: portrait) { #cards { flex-direction: column; } .card { flex: 0 0 auto; } }
+  .card {
+    flex: 1 1 0; width: 100%; max-height: 100%; aspect-ratio: 16 / 9;
+    border: 1.6vmin solid var(--frame); border-radius: 3vmin;
+    background: #111 center / cover no-repeat; padding: 0; cursor: pointer;
+    transition: transform .15s ease, opacity .3s ease;
+  }
+  @media (orientation: landscape) { .card { width: auto; height: auto; max-width: 48vw; } }
+  .card:active { transform: scale(.97); }
+  .card.chosen { transform: scale(1.04); border-color: #fff; }
+  .card.dim { opacity: .15; }
+
+  /* Video i fuld skærm */
+  #videoLayer {
+    position: fixed; inset: 0; background: #000; z-index: 20; display: none;
+  }
+  #videoLayer.show { display: block; }
+  #player, #videoLayer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  /* Opstartsskærm: "TRYK HER" over den første video. Ved YouTube går trykket
+     igennem til afspilleren bagved; ved egne videofiler fanges det af siden. */
+  #unlockHint {
+    position: absolute; inset: 0; z-index: 2; pointer-events: none; display: none;
+    background: rgba(0,0,0,.82); align-items: center; justify-content: center;
+  }
+  #unlockHint span {
+    width: min(60vw, 60vh); height: min(60vw, 60vh); border-radius: 50%;
+    border: 1.5vmin solid var(--frame); color: var(--frame);
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    font-size: min(8vw, 8vh); font-weight: 800; line-height: 1.1;
+  }
+  #videoLayer.unlock #unlockHint { display: flex; }
+  #videoLayer.unlock.local #unlockHint { pointer-events: auto; cursor: pointer; }
+  #videoLayer.unlock #closeBtn { display: none; }
+  #videoLayer.unlock #setupBtn { display: block; }
+  #closeBtn {
+    position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px; z-index: 2;
+    width: 44px; height: 44px; border-radius: 50%; border: 2px solid #555;
+    background: rgba(0,0,0,.6); color: #aaa; font-size: 22px; line-height: 1; cursor: pointer;
+  }
+  #localVideo {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    background: #000; object-fit: contain; display: none;
+  }
+  #videoLayer.local #localVideo { display: block; }
+  #videoLayer.local #player { visibility: hidden; }
+
+  /* Knap til indstillinger (til forælderen), kun på opstartsskærmen */
+  #setupBtn {
+    display: none; z-index: 3;
+    position: absolute; bottom: max(24px, env(safe-area-inset-bottom)); left: 50%;
+    transform: translateX(-50%); background: none; border: 2px solid #666; color: #bbb;
+    font-size: 20px; padding: 12px 24px; border-radius: 12px; cursor: pointer;
+  }
+
+  /* Indstillinger: vælg videofiler */
+  #setup {
+    position: fixed; inset: 0; background: #111; z-index: 35; display: none;
+    overflow-y: auto; padding: max(24px, env(safe-area-inset-top)) 24px 40px;
+    font-size: 20px;
+  }
+  #setup.show { display: block; }
+  #setup h1 { font-size: 30px; margin: 0 0 8px; }
+  #setup p { color: #ccc; margin: 0 0 20px; line-height: 1.4; }
+  .row {
+    display: flex; align-items: center; gap: 16px; padding: 14px 0;
+    border-top: 1px solid #333; flex-wrap: wrap;
+  }
+  .row img { width: 160px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; background: #222; }
+  .row .info { flex: 1 1 200px; }
+  .row .title { font-weight: 700; font-size: 22px; }
+  .row .status { color: #aaa; font-size: 17px; margin-top: 4px; }
+  .row .status.ok { color: #7CFC7C; }
+  .row label, .row button, #setupDone {
+    font-size: 18px; padding: 12px 18px; border-radius: 10px; cursor: pointer;
+    border: 2px solid var(--frame); background: #000; color: var(--frame);
+  }
+  .row button { border-color: #666; color: #ccc; }
+  .row input[type=file] { display: none; }
+  #setupDone { margin-top: 24px; font-size: 22px; padding: 14px 28px; }
+  #setup h2 { font-size: 24px; margin: 32px 0 6px; }
+  #pickCount { font-weight: 700; color: var(--frame); margin: 0 0 8px; }
+  .row .pick { width: 34px; height: 34px; accent-color: var(--frame); flex: 0 0 auto; margin: 0; }
+  .row .pick:disabled { opacity: .35; }
+  .row.always .pick:disabled { opacity: 1; }
+  .row .tag { display: inline-block; font-size: 14px; font-weight: 400; color: #000;
+              background: var(--frame); border-radius: 6px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; }
+  .row .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  #addForm { display: flex; flex-direction: column; gap: 12px; max-width: 640px; }
+  #addForm input[type=text], #addForm input[type=url] {
+    font-size: 20px; padding: 12px; border-radius: 10px; border: 2px solid #555;
+    background: #000; color: #fff; width: 100%;
+  }
+  #addPreview { display: flex; align-items: center; gap: 16px; min-height: 0; }
+  #addPreview img { width: 160px; aspect-ratio: 16/9; object-fit: cover; border-radius: 8px; }
+  #addBtn {
+    align-self: flex-start; font-size: 20px; padding: 12px 24px; border-radius: 10px; cursor: pointer;
+    border: 2px solid var(--frame); background: #000; color: var(--frame);
+  }
+
+  #msg {
+    position: fixed; left: 50%; bottom: 4vmin; transform: translateX(-50%);
+    background: #222; color: #fff; padding: 12px 20px; border-radius: 12px;
+    font-size: 18px; z-index: 40; display: none; max-width: 90vw; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h1>Indstillinger</h1>
+
+  <h2>Playliste – 4 sange</h2>
+  <p>Only Teardrops er altid med og er altid startsangen. Sæt flueben ved 3 andre sange.
+     Valget gemmes her på iPad'en.</p>
+  <p id="pickCount"></p>
+  <p>Du kan også gemme en videofil til en sang. Så spiller den fra iPad'en uden YouTube.
+     Filerne gemmes kun her på iPad'en og bliver ikke lagt på internettet.</p>
+  <div id="rows"></div>
+
+  <h2>Tilføj ny sang</h2>
+  <p>Indsæt et link fra YouTube, og skriv den titel, stemmen skal sige.</p>
+  <div id="addForm">
+    <input id="addUrl" type="url" placeholder="https://youtu.be/…" autocomplete="off" autocapitalize="off">
+    <div id="addPreview"></div>
+    <input id="addTitle" type="text" placeholder="Titel, fx Lille Peter Edderkop" autocomplete="off">
+    <button id="addBtn" type="button">Tilføj sang</button>
+  </div>
+
+  <button id="setupDone">Færdig</button>
+</div>
+
+<main id="cards">
+  <button class="card" id="cardA"></button>
+  <button class="card" id="cardB"></button>
+</main>
+
+<div id="videoLayer">
+  <div id="player"></div>
+  <video id="localVideo" playsinline webkit-playsinline preload="auto"></video>
+  <div id="unlockHint"><span>TRYK<br>HER</span></div>
+  <button id="closeBtn" aria-label="Luk video">✕</button>
+  <button id="setupBtn">⚙︎ Indstillinger</button>
+</div>
+
+<div id="msg"></div>
+
+<script>
+// ---------------------------------------------------------------
+// Sangene. "title" er det, stemmen siger højt; "id" er YouTube-id'et.
+// BUILTIN er de forudinstallerede sange. Sange tilføjet under
+// Indstillinger, rettede titler og playlisten gemmes i localStorage.
+// ---------------------------------------------------------------
+const TEARDROPS = "k59E7T0H-Us"; // altid med i playlisten og altid startsang
+const BUILTIN = [
+  { title: "Only Teardrops",          id: "k59E7T0H-Us" },
+  { title: "Massaka Kids",            id: "TH4V-yHbJXk" },
+  { title: "Can't stop the feeling",  id: "ru0K8uYEZWw" },
+  { title: "Dyt i Bamsen",            id: "M6kwBsv2tYg" },
+  { title: "Plukke æbler",            id: "nNxPd4gRGJY" },
+  { title: "Vil du vil du",           id: "D58NCycCTlE" },
+  { title: "Dance Kids",              id: "xnVzNXyn54g" },
+  { title: "Arne Aligator",           id: "6i9mCMUtPrw" },
+  { title: "Loppen",                  id: "csvwb95GcXI" },
+  { title: "Halli Hallo",             id: "cuLiCzZ7nmU" },
+];
+const DEFAULT_PICKS = ["TH4V-yHbJXk", "ru0K8uYEZWw", "M6kwBsv2tYg"];
+
+const store = {
+  get(key, fallback) {
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+    catch (e) { return fallback; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+    catch (e) { return false; }
+  },
+};
+let customSongs = store.get("billedkort.custom", []);   // [{id, title}]
+let titleEdits  = store.get("billedkort.titles", {});   // id -> titel
+
+function library() {
+  const extra = customSongs.filter(c => !BUILTIN.some(b => b.id === c.id));
+  return [...BUILTIN, ...extra].map(s => ({ ...s, title: titleEdits[s.id] || s.title }));
+}
+function findSong(id) { return library().find(s => s.id === id); }
+
+// De 3 sange ved siden af Only Teardrops. Mangler der nogen (fx en slettet
+// sang), fyldes der op, så playlisten altid har 4 sange.
+function loadPicks() {
+  const picks = store.get("billedkort.playlist", DEFAULT_PICKS)
+    .filter((id, i, a) => id !== TEARDROPS && findSong(id) && a.indexOf(id) === i)
+    .slice(0, 3);
+  for (const id of [...DEFAULT_PICKS, ...library().map(s => s.id)]) {
+    if (picks.length >= 3) break;
+    if (id !== TEARDROPS && !picks.includes(id)) picks.push(id);
+  }
+  return picks;
+}
+// Playlisten: altid 4 sange, Only Teardrops først
+const SONGS = [findSong(TEARDROPS), ...loadPicks().map(findSong)];
+
+const cardEls = [document.getElementById("cardA"), document.getElementById("cardB")];
+const videoLayer = document.getElementById("videoLayer");
+const msgEl = document.getElementById("msg");
+let shown = [];          // de to sange der vises lige nu
+let busy = false;        // ignorér tryk mens en sang er i gang
+let player = null;
+let playerReady = false;
+let pending = null;      // video der venter på at afspilleren er klar
+let playCheck = null;
+
+// --- Videofiler gemt på iPad'en (IndexedDB) ---------------------------
+const localVideo = document.getElementById("localVideo");
+const localFiles = {};   // song.id -> Blob
+let localUrl = null;
+
+function openDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("billedkort", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("videos");
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function dbDo(mode, fn) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("videos", mode);
+    const req = fn(tx.objectStore("videos"));
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function loadLocalFiles() {
+  try {
+    for (const s of library()) {
+      const blob = await dbDo("readonly", st => st.get(s.id));
+      if (blob) localFiles[s.id] = blob;
+    }
+  } catch (e) { console.warn("Kunne ikke læse gemte videoer", e); }
+}
+// Bed iPad'en om ikke at slette de gemte videoer
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+
+// --- Coverbilleder: bedste kvalitet, ellers fald tilbage -------------
+function coverUrl(song, cb) {
+  const best = `https://i.ytimg.com/vi/${song.id}/maxresdefault.jpg`;
+  const ok   = `https://i.ytimg.com/vi/${song.id}/hqdefault.jpg`;
+  const img = new Image();
+  // YouTube returnerer et lille 120px gråt billede hvis maxres ikke findes
+  img.onload  = () => cb(img.naturalWidth > 200 ? best : ok);
+  img.onerror = () => cb(ok);
+  img.src = best;
+}
+const covers = {};
+SONGS.forEach(s => coverUrl(s, url => {
+  covers[s.id] = url;
+  cardEls.forEach(el => { if (el.dataset.id === s.id) el.style.backgroundImage = `url("${url}")`; });
+}));
+
+// --- Vælg to tilfældige (helst ikke præcis samme par som før) ---------
+function pickTwo() {
+  const prev = shown.map(s => s.id).sort().join();
+  let pair;
+  do {
+    const pool = SONGS.slice();
+    pair = [];
+    while (pair.length < 2) pair.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  } while (pair.map(s => s.id).sort().join() === prev);
+  return pair;
+}
+
+function showCards() {
+  shown = pickTwo();
+  shown.forEach((song, i) => {
+    const el = cardEls[i];
+    el.dataset.id = song.id;
+    el.setAttribute("aria-label", song.title);
+    el.style.backgroundImage = covers[song.id] ? `url("${covers[song.id]}")`
+      : `url("https://i.ytimg.com/vi/${song.id}/hqdefault.jpg")`;
+    el.classList.remove("chosen", "dim");
+  });
+  busy = false;
+}
+
+// --- Dansk stemme ----------------------------------------------------
+let daVoice = null;
+function findVoice() {
+  const voices = speechSynthesis.getVoices();
+  daVoice = voices.find(v => /^da/i.test(v.lang) && /enhanced|forbedret|premium/i.test(v.name))
+         || voices.find(v => /^da/i.test(v.lang)) || null;
+}
+if ("speechSynthesis" in window) {
+  findVoice();
+  speechSynthesis.onvoiceschanged = findVoice;
+}
+
+function say(text, done) {
+  let finished = false;
+  const finish = () => { if (!finished) { finished = true; done && done(); } };
+  if (!("speechSynthesis" in window)) return finish();
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "da-DK";
+  if (daVoice) u.voice = daVoice;
+  u.rate = 0.8;     // lidt langsomt og tydeligt
+  u.pitch = 1;
+  u.volume = 1;
+  u.onend = finish;
+  u.onerror = finish;
+  speechSynthesis.speak(u);
+  // iPad glemmer nogle gange at melde "færdig" – sikkerhedsnet
+  setTimeout(finish, 1500 + text.length * 120);
+}
+
+// --- YouTube-afspiller ----------------------------------------------
+function loadYouTubeApi() {
+  const s = document.createElement("script");
+  s.src = "https://www.youtube.com/iframe_api";
+  document.head.appendChild(s);
+}
+window.onYouTubeIframeAPIReady = function () {
+  player = new YT.Player("player", {
+    width: "100%", height: "100%",
+    // Almindelig youtube.com (ikke "nocookie"), så et YouTube Premium-login kan genkendes og fjerne reklamer
+    playerVars: {
+      playsinline: 1, rel: 0, modestbranding: 1, controls: 1,
+      fs: 0, iv_load_policy: 3, disablekb: 1,
+      origin: location.origin,
+    },
+    events: {
+      onReady: () => {
+        playerReady = true;
+        if (unlocking && startSong && !localFiles[startSong.id]) player.cueVideoById(startSong.id);
+        if (pending) { const id = pending; pending = null; playVideo(id); }
+      },
+      onStateChange: e => {
+        if (unlocking && e.data === YT.PlayerState.PLAYING) finishUnlock();
+        if (e.data === YT.PlayerState.PLAYING) clearTimeout(playCheck);
+        if (e.data === YT.PlayerState.ENDED) closeVideo();
+      },
+      onError: () => {
+        toast("Videoen kunne ikke afspilles her.");
+        closeVideo();
+      },
+    },
+  });
+};
+
+function playLocal(id) {
+  videoLayer.classList.add("show", "local");
+  localVideo.currentTime = 0;
+  localVideo.muted = false;
+  const p = localVideo.play();
+  if (p && p.catch) p.catch(() => { localVideo.controls = true; }); // så kan man trykke afspil
+}
+localVideo.addEventListener("ended", closeVideo);
+localVideo.addEventListener("error", () => {
+  if (!videoLayer.classList.contains("show")) return;
+  toast("Videofilen kunne ikke afspilles. Prøv en .mp4-fil.");
+  closeVideo();
+});
+
+function playVideo(id) {
+  videoLayer.classList.add("show");
+  if (!playerReady) { pending = id; return; }
+  player.unMute();
+  player.setVolume(100);
+  player.loadVideoById(id);
+  // Hvis iPad'en ikke vil starte selv, står YouTubes egen store
+  // afspilknap klar på hele skærmen – ét tryk på den starter sangen.
+  clearTimeout(playCheck);
+  playCheck = setTimeout(() => {
+    if (player.getPlayerState && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
+  }, 2500);
+}
+
+function closeVideo() {
+  clearTimeout(playCheck);
+  if (player && playerReady) player.stopVideo();
+  localVideo.pause();
+  localVideo.controls = false;
+  localVideo.removeAttribute("src");
+  localVideo.load();
+  if (localUrl) { URL.revokeObjectURL(localUrl); localUrl = null; }
+  unlocking = false;
+  videoLayer.classList.remove("show", "local", "unlock");
+  showCards();
+  say("Vælg en sang");
+}
+
+// --- Tryk på et billede ---------------------------------------------
+cardEls.forEach((el, i) => {
+  el.addEventListener("click", () => {
+    if (busy) return;
+    busy = true;
+    const song = shown[i];
+    el.classList.add("chosen");
+    cardEls[1 - i].classList.add("dim");
+    const blob = localFiles[song.id];
+    if (blob) {
+      // Start videoen (lydløst) og sæt den på pause med det samme, mens
+      // fingeren stadig er på skærmen – så må den spille med lyd bagefter.
+      localUrl = URL.createObjectURL(blob);
+      localVideo.src = localUrl;
+      localVideo.muted = true;
+      const p = localVideo.play();
+      if (p && p.then) p.then(() => { if (localVideo.muted) localVideo.pause(); }).catch(() => {});
+      say(song.title, () => playLocal(song.id));
+    } else {
+      say(song.title, () => playVideo(song.id));
+    }
+  });
+});
+
+document.getElementById("closeBtn").addEventListener("click", closeVideo);
+
+// --- Opstart ----------------------------------------------------------
+// Appen starter med Only Teardrops og en stor "TRYK HER"-cirkel.
+// Ved YouTube rammer trykket afspilleren bag cirklen: iPad lader kun
+// YouTube starte af sig selv, når der er trykket direkte på afspilleren
+// én gang – derefter starter alle sange automatisk. Sangen spiller færdig,
+// og bagefter siger stemmen "Vælg en sang" og to billeder kommer frem.
+let unlocking = false;
+let startSong = null;
+
+function showStartScreen() {
+  unlocking = true;
+  busy = true;
+  startSong = SONGS[0]; // Only Teardrops er altid startsangen
+  videoLayer.classList.add("show", "unlock");
+  if (localFiles[startSong.id]) {
+    videoLayer.classList.add("local");
+    localUrl = URL.createObjectURL(localFiles[startSong.id]);
+    localVideo.src = localUrl;
+  } else if (playerReady) {
+    player.cueVideoById(startSong.id);
+  }
+}
+function finishUnlock() {
+  unlocking = false;
+  videoLayer.classList.remove("unlock");
+}
+// Egen videofil: trykket fanges af siden, som så starter videoen og
+// samtidig låser op for stemmen.
+document.getElementById("unlockHint").addEventListener("click", () => {
+  if (!unlocking || !videoLayer.classList.contains("local")) return;
+  say(" ");
+  finishUnlock();
+  localVideo.currentTime = 0;
+  localVideo.muted = false;
+  localVideo.play().catch(() => { localVideo.controls = true; });
+});
+
+// --- Indstillinger: playliste, videofiler og nye sange ----------------
+const setupEl = document.getElementById("setup");
+let draftPicks = [];
+
+function thumb(id) { return covers[id] || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`; }
+
+function renderSetup() {
+  const rows = document.getElementById("rows");
+  rows.innerHTML = "";
+  document.getElementById("pickCount").textContent =
+    `Valgt: ${draftPicks.length} af 3 (+ Only Teardrops)`;
+  const full = draftPicks.length >= 3;
+
+  library().forEach(song => {
+    const always = song.id === TEARDROPS;
+    const picked = always || draftPicks.includes(song.id);
+    const custom = !BUILTIN.some(b => b.id === song.id);
+    const has = !!localFiles[song.id];
+    const row = document.createElement("div");
+    row.className = "row" + (always ? " always" : "");
+    row.innerHTML = `
+      <input class="pick" type="checkbox" aria-label="Med i playlisten">
+      <img src="${thumb(song.id)}" alt="">
+      <div class="info">
+        <div class="title"></div>
+        <div class="status ${has ? "ok" : ""}">${has ? "✓ Videofil gemt" : "Afspilles fra YouTube"}</div>
+      </div>
+      <div class="actions">
+        <label>${has ? "Skift fil" : "Vælg videofil"}<input type="file" accept="video/*,.mp4,.mov,.m4v"></label>
+        ${has ? '<button type="button" data-act="rmfile">Fjern fil</button>' : ""}
+        <button type="button" data-act="rename">Ret titel</button>
+        ${custom ? '<button type="button" data-act="delete">Slet sang</button>' : ""}
+      </div>`;
+    const titleEl = row.querySelector(".title");
+    titleEl.textContent = song.title;
+    if (always) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "Altid med";
+      titleEl.appendChild(tag);
+    }
+
+    const box = row.querySelector(".pick");
+    box.checked = picked;
+    box.disabled = always || (full && !picked);
+    box.addEventListener("change", () => {
+      if (box.checked) { if (draftPicks.length < 3) draftPicks.push(song.id); }
+      else draftPicks = draftPicks.filter(id => id !== song.id);
+      renderSetup();
+    });
+
+    row.querySelector("input[type=file]").addEventListener("change", async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      row.querySelector(".status").textContent = "Gemmer…";
+      try {
+        await dbDo("readwrite", st => st.put(file, song.id));
+        localFiles[song.id] = file;
+      } catch (err) {
+        toast("Kunne ikke gemme filen – er der plads nok på iPad'en?");
+      }
+      renderSetup();
+    });
+
+    row.querySelectorAll("button[data-act]").forEach(btn => btn.addEventListener("click", async () => {
+      const act = btn.dataset.act;
+      if (act === "rmfile") {
+        await dbDo("readwrite", st => st.delete(song.id));
+        delete localFiles[song.id];
+      } else if (act === "rename") {
+        const t = prompt("Hvad skal stemmen sige?", song.title);
+        if (t && t.trim()) {
+          titleEdits[song.id] = t.trim();
+          store.set("billedkort.titles", titleEdits);
+        }
+      } else if (act === "delete") {
+        if (!confirm(`Slet "${song.title}"?`)) return;
+        customSongs = customSongs.filter(c => c.id !== song.id);
+        store.set("billedkort.custom", customSongs);
+        draftPicks = draftPicks.filter(id => id !== song.id);
+        if (localFiles[song.id]) {
+          await dbDo("readwrite", st => st.delete(song.id));
+          delete localFiles[song.id];
+        }
+      }
+      renderSetup();
+    }));
+
+    rows.appendChild(row);
+  });
+}
+
+// --- Tilføj ny sang fra et YouTube-link --------------------------------
+function parseYouTubeId(text) {
+  const t = (text || "").trim();
+  const m = t.match(/(?:youtu\.be\/|[?&]v=|\/(?:shorts|embed|live|v)\/)([A-Za-z0-9_-]{11})/);
+  if (m) return m[1];
+  return /^[A-Za-z0-9_-]{11}$/.test(t) ? t : null;
+}
+const addUrl = document.getElementById("addUrl");
+const addTitle = document.getElementById("addTitle");
+const addPreview = document.getElementById("addPreview");
+addUrl.addEventListener("input", () => {
+  const id = parseYouTubeId(addUrl.value);
+  addPreview.innerHTML = id ? `<img src="https://i.ytimg.com/vi/${id}/hqdefault.jpg" alt="">` : "";
+});
+document.getElementById("addBtn").addEventListener("click", () => {
+  const id = parseYouTubeId(addUrl.value);
+  const title = addTitle.value.trim();
+  if (!id) return toast("Linket ligner ikke et YouTube-link.");
+  if (!title) return toast("Skriv den titel, stemmen skal sige.");
+  if (findSong(id)) return toast("Den sang findes allerede på listen.");
+  customSongs.push({ id, title });
+  if (!store.set("billedkort.custom", customSongs)) return toast("Kunne ikke gemme sangen.");
+  addUrl.value = ""; addTitle.value = ""; addPreview.innerHTML = "";
+  toast(`"${title}" er tilføjet. Sæt flueben, hvis den skal i playlisten.`);
+  renderSetup();
+});
+
+document.getElementById("setupBtn").addEventListener("click", () => {
+  draftPicks = SONGS.slice(1).map(s => s.id);
+  renderSetup();
+  setupEl.classList.add("show");
+  setupEl.scrollTop = 0;
+});
+document.getElementById("setupDone").addEventListener("click", () => {
+  if (draftPicks.length !== 3) {
+    return toast(`Vælg 3 sange ud over Only Teardrops (du har valgt ${draftPicks.length}).`);
+  }
+  store.set("billedkort.playlist", draftPicks);
+  location.reload();
+});
+
+function toast(t) {
+  msgEl.textContent = t;
+  msgEl.style.display = "block";
+  setTimeout(() => (msgEl.style.display = "none"), 4000);
+}
+
+showCards();
+loadYouTubeApi();
+loadLocalFiles().then(showStartScreen);
+</script>
+</body>
+</html>
