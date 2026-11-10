@@ -46,7 +46,7 @@
   }
   #videoLayer.show { display: block; }
   #player, #videoLayer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-  /* Opstartsskærm: "TRYK HER" over den første video. Ved YouTube går trykket
+  /* Opstartsskærm: "START" over den første video. Ved YouTube går trykket
      igennem til afspilleren bagved; ved egne videofiler fanges det af siden. */
   #unlockHint {
     position: absolute; inset: 0; z-index: 2; pointer-events: none; display: none;
@@ -54,9 +54,16 @@
   }
   #unlockHint span {
     width: min(60vw, 60vh); height: min(60vw, 60vh); border-radius: 50%;
-    border: 1.5vmin solid var(--frame); color: var(--frame);
+    border: 1.5vmin solid var(--frame); color: #fff;
     display: flex; align-items: center; justify-content: center; text-align: center;
-    font-size: min(8vw, 8vh); font-weight: 800; line-height: 1.1;
+    /* Stor, ekstra fed skrift, der langsomt skifter mellem hvid og gul
+       (ca. 2 sekunder hver vej) – lettere at få øje på ved CVI */
+    font-size: min(12vw, 12vh); font-weight: 900; line-height: 1; letter-spacing: .03em;
+    animation: startPulse 4s ease-in-out infinite;
+  }
+  @keyframes startPulse {
+    0%, 100% { color: #fff; }
+    50%      { color: var(--frame); }
   }
   #videoLayer.unlock #unlockHint { display: flex; }
   #videoLayer.unlock.local #unlockHint { pointer-events: auto; cursor: pointer; }
@@ -167,7 +174,7 @@
 <div id="videoLayer">
   <div id="player"></div>
   <video id="localVideo" playsinline webkit-playsinline preload="auto"></video>
-  <div id="unlockHint"><span>TRYK<br>HER</span></div>
+  <div id="unlockHint"><span>START</span></div>
   <button id="closeBtn" aria-label="Luk video">✕</button>
   <button id="setupBtn">⚙︎ Indstillinger</button>
 </div>
@@ -446,7 +453,7 @@ cardEls.forEach((el, i) => {
 document.getElementById("closeBtn").addEventListener("click", closeVideo);
 
 // --- Opstart ----------------------------------------------------------
-// Appen starter med Only Teardrops og en stor "TRYK HER"-cirkel.
+// Appen starter med Only Teardrops og en stor "START"-cirkel.
 // Ved YouTube rammer trykket afspilleren bag cirklen: iPad lader kun
 // YouTube starte af sig selv, når der er trykket direkte på afspilleren
 // én gang – derefter starter alle sange automatisk. Sangen spiller færdig,
